@@ -23,7 +23,7 @@ import numpy as np
 from .robot import FRONT, SIDE, Geometry, leg_ik
 
 NAMES = ["off_FR", "off_RL", "off_RR", "duty", "period", "step_h", "width", "height", "sway", "sway_phase"]
-LO = np.array([0.0, 0.0, 0.0, 0.50, 0.40, 10.0, 40.0, 120.0, 0.0, 0.0])
+LO = np.array([0.0, 0.0, 0.0, 0.50, 0.40, 25.0, 40.0, 120.0, 0.0, 0.0])  # v0.3: >= 25 mm foot lift (rug clearance)
 HI = np.array([1.0, 1.0, 1.0, 0.95, 1.60, 60.0, 90.0, 200.0, 45.0, 1.0])
 
 # hand-designed references (what you'd write by hand, and what 05-quadruped ships with)
@@ -34,6 +34,11 @@ HAND = {
 }
 
 
+# Feasibility first: one violating sample (1/63 of a cycle) must cost more than the whole range of the other
+# terms (margin clamped to +-60, effort term <= ~60: range 180 -> needs > 180 x 63), so no stability margin can ever pay for a pose the robot can't reach or a joint it can't drive.
+PENALTY = 20000.0
+
+
 @dataclass
 class Eval:
     fitness: float
@@ -41,6 +46,8 @@ class Eval:
     effort: float          # mean summed joint speed (rad/s): servo work and wear
     reach_ok: float        # fraction of samples where every leg pose is reachable within joint limits
     speed: float
+    speed_ok: float = 1.0  # fraction of samples where every joint stays under the servo's speed limit
+    peak_joint_speed: float = 0.0
     details: dict | None = None
 
 
@@ -73,15 +80,22 @@ def convex_ccw(points: np.ndarray) -> np.ndarray:
 
 
 def simulate(genome: np.ndarray, speed: float = 80.0, g: Geometry = Geometry(), samples: int = 64,
-             cycles: int = 2, record: bool = False) -> Eval:
+             cycles: int = 2, record: bool = False, w_effort: float = 2.0) -> Eval:
     off_fr, off_rl, off_rr, duty, period, step_h, width, height, sway, sway_ph = genome
     offsets = np.array([0.0, off_fr, off_rl, off_rr])
     hips = g.hips()
     neutral = hips + np.column_stack([np.zeros(4), SIDE * (g.coxa + (width - 55.0))])
     stride = speed * period * duty                       # foot travel while on the ground
-    n = samples * cycles
-    ts = np.arange(n) / samples * period
-    margins, speeds, ok_all = [], [], []
+    # Time samples: a uniform grid PLUS every lift-off / touch-down instant (and just after it). The support
+    # polygon only changes at those events; a uniform grid alone lets the optimizer hide brief two-foot
+    # phases between samples (it did, until v0.3).
+    grid_t = np.arange(samples) / samples
+    events = np.concatenate([(-offsets) % 1.0, (duty - offsets) % 1.0])
+    eps = 1e-4
+    cyc = np.unique(np.concatenate([grid_t, events, (events + eps) % 1.0, (events - eps) % 1.0]))
+    ts = np.concatenate([(cyc + c) * period for c in range(cycles)])
+    margins, speeds, ok_all, vel_ok, peak = [], [], [], [], 0.0
+    prev_t = 0.0
     prev = None
     frames = [] if record else None
     for t in ts:
@@ -103,8 +117,13 @@ def simulate(genome: np.ndarray, speed: float = 80.0, g: Geometry = Geometry(), 
         ok_all.append(ok.all())
         q = np.concatenate([t1, t2, t3])
         if prev is not None:
-            speeds.append(np.abs(q - prev).sum() / (period / samples))
-        prev = q
+            dt_k = max(t - prev_t, 1e-6)
+            qd = np.abs(q - prev) / dt_k if dt_k > 2e-3 * period else np.zeros_like(q)  # skip the tiny event steps
+            if qd.any():
+                speeds.append(qd.sum())
+                vel_ok.append(bool((qd <= g.max_joint_speed).all()))
+            peak = max(peak, float(qd.max()))
+        prev, prev_t = q, t
         sup = np.column_stack([fx[stance], fy[stance]])
         com = np.array([bx, by])
         m = point_polygon_margin(com, convex_ccw(sup)) if stance.sum() >= 3 else (
@@ -116,14 +135,16 @@ def simulate(genome: np.ndarray, speed: float = 80.0, g: Geometry = Geometry(), 
     margins, ok_frac = np.array(margins), float(np.mean(ok_all))
     margin = float(margins.min())
     effort = float(np.mean(speeds))
-    fit = fitness(margin, effort, ok_frac, stance_frac=duty)
-    return Eval(fit, margin, effort, ok_frac, speed, {"frames": frames, "margins": margins} if record else None)
+    v_frac = float(np.mean(vel_ok))
+    fit = fitness(margin, effort, ok_frac, stance_frac=duty, w_effort=w_effort) - PENALTY * (1 - v_frac)
+    return Eval(fit, margin, effort, ok_frac, speed, speed_ok=v_frac, peak_joint_speed=peak,
+                details={"frames": frames, "margins": margins} if record else None)
 
 
 def fitness(margin: float, effort: float, ok_frac: float, stance_frac: float, w_effort: float = 2.0) -> float:
     """Maximise worst-case stability margin (mm), minus a servo-effort cost, with a heavy penalty for
     any unreachable pose (a gait the robot can't physically execute is worthless)."""
-    return min(margin, 60.0) - w_effort * effort - 400.0 * (1 - ok_frac)
+    return float(np.clip(margin, -60.0, 60.0)) - w_effort * effort - PENALTY * (1 - ok_frac)
 
 
 def clip(genome: np.ndarray) -> np.ndarray:

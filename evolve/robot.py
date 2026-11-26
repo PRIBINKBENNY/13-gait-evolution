@@ -22,6 +22,8 @@ class Geometry:
     hip_lim: tuple = (-35.0, 35.0)
     femur_lim: tuple = (-70.0, 80.0)
     knee_lim: tuple = (0.0, 140.0)
+    # MG996R: ~0.17 s/60 deg unloaded at 6 V (6.2 rad/s); ~0.2 s/60 deg under load -> 5.2 rad/s
+    max_joint_speed: float = 5.2
 
     def hips(self) -> np.ndarray:
         """[4, 2] hip positions in the body frame (x forward, y left), mm."""
