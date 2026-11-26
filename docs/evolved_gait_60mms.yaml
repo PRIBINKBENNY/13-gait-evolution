@@ -1,0 +1,10 @@
+# evolved by 13-gait-evolution for 60 mm/s (lateral-sequence walk)
+# quadruped/gait.py -> GAITS["evolved"] = ({"FL": 0.0, "FR": 0.489, "RL": 0.135, "RR": 0.623}, 0.868)
+# config/robot.yaml:
+stance:
+  height: 149
+  foot_y: 90
+gait:
+  period: 1.57
+  step_height: 25
+# body sway: none needed

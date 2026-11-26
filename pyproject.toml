@@ -1,6 +1,6 @@
 [project]
 name = "gait-evolution"
-version = "0.3.0"
+version = "0.4.0"
 description = "Evolving statically stable, low-effort gaits for a 12-servo quadruped."
 requires-python = ">=3.10"
 dependencies = ["numpy>=1.26"]

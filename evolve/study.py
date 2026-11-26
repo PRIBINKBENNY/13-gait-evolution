@@ -14,8 +14,10 @@ LEG = ("FL", "FR", "RL", "RR")
 
 
 def footfall(genome: np.ndarray) -> str:
-    off = np.array([0.0, *genome[:3]])
-    return " → ".join(LEG[i] for i in np.argsort(off))
+    """Order in which feet touch down. Leg i touches down when (t/T + offset_i) wraps to 0, i.e. at
+    t/T = (-offset_i) mod 1, so a LARGER offset means an EARLIER touchdown."""
+    touchdown = (-np.array([0.0, *genome[:3]])) % 1.0
+    return " → ".join(LEG[i] for i in np.argsort(touchdown))
 
 
 def gait_name(genome: np.ndarray) -> str:
@@ -27,9 +29,11 @@ def gait_name(genome: np.ndarray) -> str:
     if d(off[0], off[2]) < 0.1 and d(off[1], off[3]) < 0.1 and d(off[0], off[1]) > 0.35:
         return "pace"
     order = footfall(genome)
-    if order == "FL → RL → FR → RR":
-        return "lateral-sequence walk"
+    # Hildebrand: lateral sequence = each hind foot is followed by the fore foot on the SAME side
+    # (LH, LF, RH, RF -> from LF: LF, RH, RF, LH); diagonal sequence = hind followed by the OPPOSITE fore foot
     if order == "FL → RR → FR → RL":
+        return "lateral-sequence walk"
+    if order == "FL → RL → FR → RR":
         return "diagonal-sequence walk"
     return "other (" + order + ")"
 
@@ -97,8 +101,8 @@ def export_05(genome: np.ndarray, speed: float) -> str:
             f'# quadruped/gait.py -> GAITS["evolved"] = ({json.dumps(offsets)}, {g[3]:.3f})\n'
             f'# config/robot.yaml:\n'
             f'stance:\n  height: {g[7]:.0f}\n  foot_y: {55 + (g[6] - 55):.0f}\n'
-            f'gait:\n  period: {g[4]:.2f}\n  step_height: {g[5]:.0f}\n'
-            f'# body sway: {g[8]:.0f} mm at phase {g[9]:.2f} (needs Pose shifting in Robot.tick; see README)\n')
+            f'gait:\n  period: {g[4]:.2f}\n  step_height: {g[5]:.0f}\n' +
+            (f'# body sway: {g[8]:.0f} mm at phase {g[9]:.2f} (needs Pose shifting in Robot.tick)\n' if g[8] >= 1 else '# body sway: none needed\n'))
 
 
 def main() -> int:

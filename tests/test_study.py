@@ -44,6 +44,13 @@ def test_rediscovers_the_lateral_sequence_walk(evolved_45):
     assert gait_name(evolved_45[0]) == "lateral-sequence walk"
 
 
+def test_footfall_is_touchdown_order():
+    from evolve.study import footfall
+
+    # offsets FR .5, RL .75, RR .25 -> touchdowns at FL 0, RL .25, FR .5, RR .75
+    assert footfall(HAND["05 walk (crawl)"]) == "FL → RL → FR → RR"
+
+
 def test_gait_names():
     assert gait_name(HAND["05 trot"]) == "trot"
     assert gait_name(HAND["05 walk (crawl)"]) == "diagonal-sequence walk"
